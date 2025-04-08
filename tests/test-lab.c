@@ -133,6 +133,56 @@ void test_buddy_init(void)
     }
 }
 
+void test_buddy_multiple_allocs(void) {
+  struct buddy_pool pool;
+  buddy_init(&pool, UINT64_C(1) << DEFAULT_K);
+
+  void *a = buddy_malloc(&pool, 64);
+  void *b = buddy_malloc(&pool, 128);
+  void *c = buddy_malloc(&pool, 256);
+  TEST_ASSERT_NOT_NULL(a);
+  TEST_ASSERT_NOT_NULL(b);
+  TEST_ASSERT_NOT_NULL(c);
+
+  buddy_free(&pool, b);
+  buddy_free(&pool, a);
+  buddy_free(&pool, c);
+
+  check_buddy_pool_full(&pool);
+  buddy_destroy(&pool);
+}
+
+void test_buddy_invalid_inputs(void) {
+  struct buddy_pool pool;
+  buddy_init(&pool, UINT64_C(1) << DEFAULT_K);
+
+  void *null_test = buddy_malloc(NULL, 100);
+  TEST_ASSERT_NULL(null_test);
+
+  void *zero_test = buddy_malloc(&pool, 0);
+  TEST_ASSERT_NULL(zero_test);
+
+  buddy_free(&pool, NULL); // should not crash
+
+  buddy_destroy(&pool);
+}
+
+void test_buddy_reuse_after_free(void) {
+  struct buddy_pool pool;
+  buddy_init(&pool, UINT64_C(1) << DEFAULT_K);
+
+  void *ptr1 = buddy_malloc(&pool, 512);
+  TEST_ASSERT_NOT_NULL(ptr1);
+  buddy_free(&pool, ptr1);
+
+  void *ptr2 = buddy_malloc(&pool, 512);
+  TEST_ASSERT_NOT_NULL(ptr2);
+  buddy_free(&pool, ptr2);
+
+  check_buddy_pool_full(&pool);
+  buddy_destroy(&pool);
+}
+
 
 int main(void) {
   time_t t;
