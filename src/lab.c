@@ -29,37 +29,119 @@
  * @param bytes the number of bytes
  * @return size_t the K value that will fit bytes
  */
-size_t btok(size_t bytes)
-{
-    //DO NOT use math.pow
+size_t btok(size_t bytes) {
+    size_t k = 0;
+    size_t block_size = 1;
+    while (block_size < bytes) {
+        block_size <<= 1;  // multiply by 2 using bit shifting
+        k++;
+    }
+    return k;
 }
 
-struct avail *buddy_calc(struct buddy_pool *pool, struct avail *buddy)
-{
 
+struct avail *buddy_calc(struct buddy_pool *pool, struct avail *block) {
+    uintptr_t offset = (uintptr_t)block - (uintptr_t)pool->base;
+    uintptr_t buddy_offset = offset ^ (UINT64_C(1) << block->kval);
+    return (struct avail *)((uintptr_t)pool->base + buddy_offset);
 }
+
 
 void *buddy_malloc(struct buddy_pool *pool, size_t size)
 {
+    if (pool == NULL || size == 0)
+        return NULL;
 
-    //get the kval for the requested size with enough room for the tag and kval fields
+    size_t total_size = size + sizeof(struct avail);
+    size_t kval = btok(total_size);
 
-    //R1 Find a block
+    if (kval < SMALLEST_K)
+        kval = SMALLEST_K;
 
-    //There was not enough memory to satisfy the request thus we need to set error and return NULL
+    // Find block or split
+    size_t i = kval;
+    while (i <= pool->kval_m && pool->avail[i].next == &pool->avail[i]) {
+        i++;
+    }
 
-    //R2 Remove from list;
+    if (i > pool->kval_m) {
+        errno = ENOMEM;
+        return NULL;
+    }
 
-    //R3 Split required?
+    // Split down from level i to kval
+    while (i > kval) {
+        struct avail *block = pool->avail[i].next;
 
-    //R4 Split the block
+        // Remove from free list
+        block->prev->next = block->next;
+        block->next->prev = block->prev;
 
+        i--;
+
+        // Split the block
+        size_t block_size = UINT64_C(1) << i;
+        struct avail *buddy = (struct avail *)((char *)block + block_size);
+
+        block->kval = i;
+        buddy->kval = i;
+        block->tag = BLOCK_AVAIL;
+        buddy->tag = BLOCK_AVAIL;
+
+        // Insert both blocks into the lower level
+        block->next = buddy->prev = &pool->avail[i];
+        block->prev = buddy;
+        buddy->next = block;
+        pool->avail[i].next = block;
+        pool->avail[i].prev = buddy;
+    }
+
+    // Finally, allocate block
+    struct avail *final_block = pool->avail[kval].next;
+
+    // Remove from free list
+    final_block->prev->next = final_block->next;
+    final_block->next->prev = final_block->prev;
+
+    final_block->tag = BLOCK_RESERVED;
+
+    return (void *)(final_block + 1); // skip header
 }
+
 
 void buddy_free(struct buddy_pool *pool, void *ptr)
 {
+    if (ptr == NULL || pool == NULL)
+        return;
 
+    struct avail *block = (struct avail *)ptr - 1;
+    block->tag = BLOCK_AVAIL;
+
+    while (block->kval < pool->kval_m) {
+        struct avail *buddy = buddy_calc(pool, block);
+
+        if (buddy->tag != BLOCK_AVAIL || buddy->kval != block->kval)
+            break;
+
+        // Buddy must be removed from the list
+        buddy->prev->next = buddy->next;
+        buddy->next->prev = buddy->prev;
+
+        // Merge: use lower address
+        if (buddy < block)
+            block = buddy;
+
+        block->kval++;
+    }
+
+    // Insert block into avail[kval]
+    size_t kval = block->kval;
+    block->next = pool->avail[kval].next;
+    block->prev = &pool->avail[kval];
+    pool->avail[kval].next->prev = block;
+    pool->avail[kval].next = block;
 }
+
 
 /**
  * @brief This is a simple version of realloc.
