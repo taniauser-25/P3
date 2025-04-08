@@ -115,11 +115,12 @@ void buddy_free(struct buddy_pool *pool, void *ptr)
 
     block->tag = BLOCK_AVAIL;
 
-    size_t kval = block->kval;
-    block->next = pool->avail[kval].next;
-    block->prev = &pool->avail[kval];
-    pool->avail[kval].next->prev = block;
-    pool->avail[kval].next = block;
+    block->tag = BLOCK_AVAIL;
+    block->next = &pool->avail[block->kval];
+    block->prev = &pool->avail[block->kval];
+    pool->avail[block->kval].next = block;
+    pool->avail[block->kval].prev = block;
+
 }
 
 void *buddy_realloc(struct buddy_pool *pool, void *ptr, size_t size)
